@@ -1,0 +1,212 @@
+{
+  "name": "WhatsApp AI Chatbot with Twilio & Groq",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 🕸️ Webhook & Extraction\n\n**① Webhook Endpoint:**\nAccepts incoming POST requests from Twilio at `/webhook/whatsapp`.\n\n**② Message Extraction:**\nSafely parses the incoming form data to extract `Body`, `From`, and `MessageSid`, making it robust against different payload formats.",
+        "width": 380,
+        "height": 180,
+        "color": 6
+      },
+      "id": "note-webhook",
+      "name": "Note | Webhook & Extraction",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [220, -120]
+    },
+    {
+      "parameters": {
+        "content": "### 🤖 AI Processing & Error Handling\n\n**① Groq Llama 3.3:**\nQueries Llama-3.3-70b-versatile via direct API completions, bypassing conversational memory for zero-state stateless operation.\n\n**② Extract AI Reply:**\nExtracts the AI's content and includes robust fallback handling if the API is down or throttled.",
+        "width": 380,
+        "height": 180,
+        "color": 4
+      },
+      "id": "note-ai",
+      "name": "Note | AI Processing",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [780, -120]
+    },
+    {
+      "parameters": {
+        "content": "### 📤 Outbound Delivery\n\n**① Typing Delay:**\nSimulates a 2-second realistic human response latency to enhance user experience.\n\n**② Twilio Outbound Reply:**\nSends the extracted reply back to the sender's original number using Twilio Sandbox credentials.",
+        "width": 380,
+        "height": 180,
+        "color": 2
+      },
+      "id": "note-delivery",
+      "name": "Note | Outbound Delivery",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1340, -120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nreturn [{\n  json: {\n    Body: (payload.Body || payload.body || '').toString().trim(),\n    From: (payload.From || payload.from || '').toString().trim(),\n    MessageSid: (payload.MessageSid || payload.messageSid || '').toString().trim()\n  }\n}];"
+      },
+      "id": "extract-message-1",
+      "name": "Extract WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [530, 120]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "jsonParameters": true,
+        "options": {
+          "retryOnFail": true,
+          "retryLimit": 2,
+          "retryInterval": 5,
+          "throwOnFailStatusCode": false
+        },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.GROQ_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParametersJson": "={{ JSON.stringify({\n  model: \"llama-3.3-70b-versatile\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"You are a helpful WhatsApp AI assistant.\"\n    },\n    {\n      role: \"user\",\n      content: $json[\"Body\"]\n    }\n  ],\n  temperature: 0.7\n}) }}"
+      },
+      "id": "groq-request-1",
+      "name": "Groq API HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [810, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const groqResponse = $input.first().json;\nconst content = groqResponse?.choices?.[0]?.message?.content;\nconst failed = !content;\nconst replyText = failed\n  ? 'Sorry, I could not process that right now. Please try again later.'\n  : content.trim();\n\nreturn [{\n  json: {\n    choices: [\n      {\n        message: {\n          content: replyText\n        }\n      }\n    ],\n    apiStatus: failed ? 'fallback' : 'success'\n  }\n}];"
+      },
+      "id": "extract-reply-1",
+      "name": "Extract AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1090, 120]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "typing-delay-1",
+      "name": "Typing Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1370, 120]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "to": "={{$node[\"Webhook\"].json[\"From\"]}}",
+        "from": "whatsapp:+14155238886",
+        "message": "={{$json[\"choices\"][0][\"message\"][\"content\"]}}"
+      },
+      "id": "send-reply-1",
+      "name": "Twilio Send Message",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1650, 120],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio WhatsApp Sandbox"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Groq API HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq API HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Extract AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Typing Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Typing Delay": {
+      "main": [
+        [
+          {
+            "node": "Twilio Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    "whatsapp",
+    "twilio",
+    "groq",
+    "ai",
+    "chatbot"
+  ]
+}
